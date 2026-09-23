@@ -13,7 +13,7 @@ import { postApi } from '../lib/client-api.ts';
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
 const config = { apiKey: 'test-key-not-real', redisUrl: 'https://redis.example.invalid', redisToken: 'test-redis', salt: 'a'.repeat(32), namespace: 'test', dailyLimit: 100, minuteLimit: 5, concurrency: 3 };
-const recipe = { name: '野菜炒め', time: '15分', ingredients: ['キャベツ 100g'], steps: ['炒める'] };
+const recipe = { name: '野菜炒め', time: '15分', ingredients: ['キャベツ 100g'], missingIngredients: ['キャベツ 100g'], steps: ['炒める'] };
 const validRecipes = { recipes: [recipe, recipe, recipe] };
 let calls;
 let aiPayload;
@@ -130,6 +130,17 @@ test('API success validates recipe response and separates instructions from ingr
   assert.equal(calls.filter(x => x.startsWith('https://api.openai.com')).length, 1);
   assert.equal(calls.filter(x => x.startsWith(config.redisUrl)).length, 2);
 });
+test('missing ingredients accept empty lists and reject invalid or unrelated entries', async () => {
+  const complete = { ...recipe, missingIngredients: [] };
+  aiReply.output[0].content[0].text = JSON.stringify({ recipes: [complete, recipe, recipe] });
+  const result = await generate('recipes', ['キャベツ'], config, new AbortController().signal);
+  assert.deepEqual(result.recipes[0].missingIngredients, []);
+  for (const missingIngredients of [undefined, '塩', [' '], Array(21).fill('塩'), ['a'.repeat(121)], ['塩 小さじ1'], ['キャベツ 100g', 'キャベツ 100g']]) {
+    aiReply.output[0].content[0].text = JSON.stringify({ recipes: [{ ...recipe, missingIngredients }, recipe, recipe] });
+    await assert.rejects(generate('recipes', ['卵'], config, new AbortController().signal), { code: 'AI_INVALID' });
+  }
+});
+
 test('configuration errors and exhausted quota make no OpenAI call', async () => {
   delete process.env.OPENAI_API_KEY;
   assert.equal((await handle(jsonRequest({ ingredients: ['卵'] }), 'recipes')).status, 503);

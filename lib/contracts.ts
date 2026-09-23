@@ -14,6 +14,7 @@ export const recipesSchema = z.object({
     name: z.string().trim().min(1).max(80),
     time: z.string().trim().min(1).max(40),
     ingredients: z.array(z.string().trim().min(1).max(120)).min(1).max(20),
+    missingIngredients: z.array(z.string().trim().min(1).max(120)).max(20),
     steps: z.array(z.string().trim().min(1).max(400)).min(1).max(12),
   }).strict()).length(3),
 }).strict();

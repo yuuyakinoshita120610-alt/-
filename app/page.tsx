@@ -234,6 +234,18 @@ export default function Home() {
 
                       </div>
 
+                      <div className="mt-4 rounded-xl bg-amber-50 p-4">
+                        <h4 className="font-semibold text-gray-900">🛒 追加で必要な食材</h4>
+                        {recipe.missingIngredients.length > 0 ? (
+                          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-gray-800">
+                            {recipe.missingIngredients.map((item, itemIndex) => <li key={itemIndex}>{item}</li>)}
+                          </ul>
+                        ) : (
+                          <p className="mt-2 text-sm text-green-800">追加の食材はありません。</p>
+                        )}
+                        <p className="mt-2 text-xs text-gray-600">入力した食材と比較しています。調味料も含みます。手元の分量は材料一覧で確認してください。</p>
+                      </div>
+
                       <button
                         onClick={() => toggleRecipe(index)}
                         className="mt-5 w-full rounded-xl border border-orange-500 px-4 py-3 font-semibold text-orange-600 transition hover:bg-orange-50"
