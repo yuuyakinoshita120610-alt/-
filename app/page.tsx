@@ -6,13 +6,13 @@ import { postApi } from "@/lib/client-api";
 import { RequestGate } from "@/lib/request-gate";
 import IngredientEditor from "./components/ingredient-editor";
 import SeasoningPantry from "./components/seasoning-pantry";
-import type { Seasoning } from "@/lib/pantry";
+import { availableSeasonings, type PantryItem } from "@/lib/pantry";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [image, setImage] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<string[]>([]);
-  const [seasonings, setSeasonings] = useState<Seasoning[]>([]);
+  const [seasonings, setSeasonings] = useState<PantryItem[]>([]);
   const [analyzed, setAnalyzed] = useState(false);
   const [edited, setEdited] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -23,8 +23,8 @@ export default function Home() {
   const preview = useRef<string | null>(null);
   const analyzing = busy === "analyze";
   const generating = busy === "recipes";
-  const recipeInput = recipeInputSchema.safeParse({ ingredients, seasonings });
-  const saveSeasonings = useCallback((items: Seasoning[]) => {
+  const recipeInput = recipeInputSchema.safeParse({ ingredients, seasonings: availableSeasonings(seasonings) });
+  const saveSeasonings = useCallback((items: PantryItem[]) => {
     gate.current.invalidate();
     setBusy(null); setSeasonings(items); setRecipes([]); setOpenRecipe(null); setError("");
   }, []);
@@ -61,6 +61,8 @@ export default function Home() {
   };
 
   const run = async (operation: "analyze" | "recipes") => {
+    // Re-evaluate the date at submission, even if the page remained open overnight.
+    const recipeInput = recipeInputSchema.safeParse({ ingredients, seasonings: availableSeasonings(seasonings) });
     // Also block rapid clicks before React renders the disabled buttons.
     if (operation === "analyze" && !file || operation === "recipes" && !ingredients.length) return;
     if (operation === "recipes" && !recipeInput.success) return;
