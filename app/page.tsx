@@ -1,110 +1,106 @@
 "use client";
 
-import { useState } from "react";
-
-type Recipe = {
-  name: string;
-  time: string;
-  ingredients: string[];
-  steps: string[];
-};
+import { useEffect, useRef, useState } from "react";
+import { analysisSchema, recipesSchema, recipeInputSchema, imageFileError, type Recipe } from "@/lib/contracts";
+import { postApi } from "@/lib/client-api";
+import { RequestGate } from "@/lib/request-gate";
+import IngredientEditor from "./components/ingredient-editor";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [image, setImage] = useState<string | null>(null);
-  const [ingredients, setIngredients] = useState("");
+  const [ingredients, setIngredients] = useState<string[]>([]);
+  const [analyzed, setAnalyzed] = useState(false);
+  const [edited, setEdited] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [openRecipe, setOpenRecipe] = useState<number | null>(null);
-
-  const [analyzing, setAnalyzing] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  const [busy, setBusy] = useState<"analyze" | "recipes" | null>(null);
   const [error, setError] = useState("");
+  const gate = useRef(new RequestGate());
+  const preview = useRef<string | null>(null);
+  const analyzing = busy === "analyze";
+  const generating = busy === "recipes";
+  const recipeInput = recipeInputSchema.safeParse({ ingredients });
 
-  const handleImageChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const selectedFile = e.target.files?.[0];
+  useEffect(() => {
+    const requests = gate.current;
+    return () => {
+      requests.invalidate();
+      if (preview.current) URL.revokeObjectURL(preview.current);
+    };
+  }, []);
 
-    if (!selectedFile) return;
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    e.target.value = "";
+    if (!selected) return;
+    gate.current.invalidate();
+    setBusy(null);
+    if (preview.current) URL.revokeObjectURL(preview.current);
+    preview.current = null;
+    setImage(null);
+    setFile(null);
+    setIngredients([]);
+    setAnalyzed(false);
+    setEdited(false);
+    setRecipes([]);
+    setOpenRecipe(null);
+    const message = imageFileError(selected);
+    setError(message || "");
+    if (message) return;
+    preview.current = URL.createObjectURL(selected);
+    setImage(preview.current);
+    setFile(selected);
+  };
 
-    setFile(selectedFile);
-    setImage(URL.createObjectURL(selectedFile));
-    setIngredients("");
+  const run = async (operation: "analyze" | "recipes") => {
+    // Also block rapid clicks before React renders the disabled buttons.
+    if (operation === "analyze" && !file || operation === "recipes" && !ingredients.length) return;
+    if (operation === "recipes" && !recipeInput.success) return;
+    const ticket = gate.current.begin();
+    if (!ticket) return;
+    const controller = ticket.controller;
+    setBusy(operation);
+    setError("");
+    setRecipes([]);
+    setOpenRecipe(null);
+    try {
+      if (operation === "analyze") {
+        setIngredients([]);
+        setAnalyzed(false);
+        setEdited(false);
+        const form = new FormData();
+        form.append("image", file!);
+        const data = await postApi("/api/analyze", form, analysisSchema, controller.signal);
+        if (!gate.current.isCurrent(ticket)) return;
+        setIngredients(data.ingredients);
+        setAnalyzed(true);
+      } else {
+        if (!recipeInput.success) return;
+        const data = await postApi("/api/recipes", recipeInput.data, recipesSchema, controller.signal);
+        if (!gate.current.isCurrent(ticket)) return;
+        setRecipes(data.recipes);
+      }
+    } catch (err) {
+      if (gate.current.isCurrent(ticket) && !controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : "処理に失敗しました。もう一度お試しください。");
+      }
+    } finally {
+      if (gate.current.finish(ticket)) {
+        setBusy(null);
+      }
+    }
+  };
+
+  const editIngredients = (next: string[]) => {
+    // Invalidate any old result as well as clearing recipes derived from the old list.
+    gate.current.invalidate();
+    setBusy(null);
+    setIngredients(next);
+    setEdited(true);
     setRecipes([]);
     setOpenRecipe(null);
     setError("");
-  };
-
-  const analyzeImage = async () => {
-    if (!file) return;
-
-    try {
-      setAnalyzing(true);
-      setError("");
-      setIngredients("");
-      setRecipes([]);
-
-      const formData = new FormData();
-      formData.append("image", file);
-
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "分析に失敗しました。");
-      }
-
-      setIngredients(data.ingredients);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "分析に失敗しました。"
-      );
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  const generateRecipes = async () => {
-    if (!ingredients) return;
-
-    try {
-      setGenerating(true);
-      setError("");
-      setRecipes([]);
-      setOpenRecipe(null);
-
-      const response = await fetch("/api/recipes", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ ingredients }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.error || "レシピの生成に失敗しました。"
-        );
-      }
-
-      setRecipes(data.recipes);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "レシピの生成に失敗しました。"
-      );
-    } finally {
-      setGenerating(false);
-    }
   };
 
   const toggleRecipe = (index: number) => {
@@ -127,7 +123,7 @@ export default function Home() {
 
         <div className="mt-10 rounded-3xl bg-white p-6 shadow-sm sm:p-8">
 
-          <label className="flex cursor-pointer flex-col items-center rounded-2xl border-2 border-dashed border-gray-300 p-8 transition hover:bg-gray-50">
+          <label className="flex cursor-pointer flex-col items-center rounded-2xl border-2 border-dashed border-gray-300 p-8 transition hover:bg-gray-50 focus-within:ring-2 focus-within:ring-green-600">
 
             <span className="text-5xl">📷</span>
 
@@ -141,14 +137,19 @@ export default function Home() {
 
             <input
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp" aria-label="食材の写真"
               onChange={handleImageChange}
-              className="hidden"
+              className="sr-only"
             />
           </label>
 
+          <p className="mt-3 text-sm text-gray-600">JPEG・PNG・WebP、3MB以下の写真を選んでください。</p>
+          <p role="status" aria-live="polite" className="mt-3 text-sm text-gray-600">{busy ? "処理には数十秒かかることがあります。" : analyzed && !edited && !ingredients.length ? "食材を見つけられませんでした。下で食材を追加するか、別の写真でお試しください。" : ""}</p>
+
           {image && (
             <div className="mt-6">
+              {/* Local blob preview: no remote image optimization is needed. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={image}
                 alt="選択した食材"
@@ -156,8 +157,8 @@ export default function Home() {
               />
 
               <button
-                onClick={analyzeImage}
-                disabled={analyzing}
+                onClick={() => void run("analyze")}
+                disabled={busy !== null}
                 className="mt-6 w-full rounded-xl bg-green-600 px-5 py-4 font-bold text-white transition hover:bg-green-700 disabled:opacity-50"
               >
                 {analyzing
@@ -167,20 +168,18 @@ export default function Home() {
             </div>
           )}
 
-          {ingredients && (
-            <section className="mt-8 rounded-2xl bg-green-50 p-6">
+            <section aria-labelledby="ingredient-heading" className="mt-8 rounded-2xl bg-green-50 p-6">
 
-              <h2 className="text-xl font-bold text-gray-900">
-                🥕 見つかった食材
+              <h2 id="ingredient-heading" className="text-xl font-bold text-gray-900">
+                🥕 料理に使う食材
               </h2>
 
-              <p className="mt-4 whitespace-pre-line leading-7 text-gray-700">
-                {ingredients}
-              </p>
+              <IngredientEditor ingredients={ingredients} disabled={busy !== null} onChange={editIngredients} />
+              {edited && <p className="mt-4 text-sm text-gray-700">入力・編集した食材で料理を提案します。</p>}
 
               <button
-                onClick={generateRecipes}
-                disabled={generating}
+                onClick={() => void run("recipes")}
+                disabled={busy !== null || !recipeInput.success}
                 className="mt-6 w-full rounded-xl bg-orange-500 px-5 py-4 font-bold text-white transition hover:bg-orange-600 disabled:opacity-50"
               >
                 {generating
@@ -189,7 +188,6 @@ export default function Home() {
               </button>
 
             </section>
-          )}
 
           {recipes.length > 0 && (
             <section className="mt-10">
@@ -307,7 +305,7 @@ export default function Home() {
           )}
 
           {error && (
-            <div className="mt-6 rounded-xl bg-red-50 p-4 text-red-700">
+            <div role="alert" className="mt-6 rounded-xl bg-red-50 p-4 text-red-700">
               {error}
             </div>
           )}

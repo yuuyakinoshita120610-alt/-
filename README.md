@@ -1,36 +1,100 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ラクラクック
 
-## Getting Started
+写真から食材を認識し、料理を3品提案するNext.jsアプリです。
 
-First, run the development server:
+## 開発環境
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Node.js 24を推奨（最低22.15）。`.nvmrc`を同梱しています。
+
+1. `npm ci`
+2. `.env.example`を`.env.local`へコピー。
+3. `OPENAI_API_KEY`を設定し、利用上限を確認して`AI_ENABLED=true`。
+4. `npm run dev`で起動し、http://localhost:3000 を開く。
+
+実際のAPIキーをGitHubやチャットへ貼らないでください。秘密情報に`NEXT_PUBLIC_`を付けないでください。
+開発時のみ、Redis未設定ならプロセス内の簡易制限を使います（再起動でリセットされます）。
+
+## 公開前の設定
+
+本番（`npm start`を含む）では、次の設定がないとAI呼び出しを503で停止します。
+
+| 環境変数 | 用途 |
+| --- | --- |
+| OPENAI_API_KEY | OpenAI専用プロジェクトのサーバー用キー |
+| AI_ENABLED | `true`で有効。停止時は`false`へ変更して再デプロイ |
+| UPSTASH_REDIS_REST_URL | 利用回数を共有管理するUpstash RedisのHTTPS REST URL |
+| UPSTASH_REDIS_REST_TOKEN | 上記DBへEVAL・書き込みできるトークン |
+| RATE_LIMIT_SALT | 32文字以上のランダムな秘密文字列。全インスタンスで共通 |
+| RATE_LIMIT_NAMESPACE | 同じ公開環境の全インスタンスで共通。初期値rakuracook |
+
+Redisの作成・契約はこのリポジトリでは自動実行しません。既存のUpstash Redisを使うか、管理者が用意してください。
+本番DBはキーの自動退避・削除（eviction）を無効にし、回数管理のキーを運用中に削除しないでください。
+同じ環境の全サーバーでDB・namespace・上限を統一します。プレビュー環境は本番と別namespace/DBにします。
+ネットワーク障害やRedisのエラー時は制限を迂回せず503になります。
+RESTコマンドとEVALの仕様は[Upstash公式資料](https://upstash.com/docs/redis/features/restapi)に基づきます。
+
+### 利用回数と費用対策
+
+| 設定 | 初期値 | 意味 |
+| --- | --- | --- |
+| AI_DAILY_CALL_LIMIT | 100 | 全利用者・両API合計で1日100回まで |
+| AI_CLIENT_MINUTE_LIMIT | 5 | 呼び出し元ごとに1分5回まで |
+| AI_MAX_CONCURRENT | 3 | サービス全体で同時3処理まで |
+| TRUSTED_IP_HEADER | 空 | 信頼できるプロキシが上書きする単一IPヘッダー名 |
+
+- 分・日の固定窓で計数します。日次リセットはUTC午前0時（日本時間午前9時）。
+- 写真分析とレシピ生成は各1回。通常の一連の操作は2回分です。
+- 許可されたリクエストは入力不正・AI失敗・キャンセルでも1回消費します。上限で拒否されたものは消費しません。
+- 同じ呼び出し元は同時1処理。処理終了時に解除し、サーバーが異常終了しても90秒で枠が回復します。
+- IPヘッダー未指定・不正・欠落時は全訪問者が共通枠（1分5回、同時1処理）を使います。安全な限定テスト用の初期設定です。
+- `TRUSTED_IP_HEADER`には、公開先が必ず上書きし利用者が偽装できないヘッダーだけを指定してください。複数IPのリストは受け付けません。プロキシを迂回して直接接続できない構成にしてください。通常の`X-Forwarded-For`を無条件に信用しません。
+- ログインは未実装です。IP制限は利用者認証ではなく、同じ回線の人は枠を共有し得ます。
+- Redisの判定と回数加算は1つのLuaスクリプトで実行し、複数サーバーからの同時操作で上限を超えないようにしています。
+- 自動再試行なし。出力は分析1200／料理5000トークンまで。画像は正規化後の最大1280×1280、食材は30個×80文字までです。
+- **回数上限は円・ドル単位の請求額保証ではありません。** モデルの価格と実測使用量を見て上限を調整し、OpenAI管理画面でも使用量監視・予算通知を設定してください。別アプリの同じキーの使用はこの上限に含まれません。
+- 緊急時は`AI_ENABLED=false`へ変更して再デプロイし、必要に応じてOpenAI側のキーも停止します。進行中の呼び出しの課金までは取り消せません。
+
+## 入出力・エラー処理
+
+- `POST /api/analyze`: multipartの`image`ファイル1枚。JPEG/PNG/WebP、3MB以下、2500万画素以下の静止画。実際にデコードし、形式を確認、メタデータを除去してJPEGに変換します。
+- 受信本文はContent-Lengthの有無にかかわらず実測で制限。画像の本文上限は3MB＋64KB、JSONは16KB。
+- `POST /api/recipes`: `{ "ingredients": ["卵", "白菜"] }`。文字列形式の旧APIとは互換性がないため、画面とAPIを一緒に公開してください。
+- 成功時は`{ ingredients: string[], requestId }`または`{ recipes: Recipe[], requestId }`。食材0件は正常な結果として再撮影を案内します。
+- AIへの固定指示と食材データを分離。`gpt-5-mini`の[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)で形式を指定し、サーバーと画面でも検証します。拒否・途中終了・不正なJSONも処理します。
+- エラーは`{ error, code, requestId, retryAfter? }`。400:入力不正、403:別サイトからのブラウザー送信、408:送信遅延、413:容量超過、415:画像形式、422:AI拒否、429:アプリの利用制限、502:AI応答異常、503:設定不足/停止/外部サービス障害、504:AI待ち時間超過。
+- 画像本文の受信は10秒、Redis通信は各2秒、AIは35秒、画面は55秒で打ち切ります。公開先は60秒以上の関数実行時間と3MB＋64KB以上の本文受信に対応させてください。公開先の制限がより小さい場合は上限も合わせて下げてください。
+- ログは処理名・結果コード・所要時間・お問い合わせ番号のみ。キー・画像・食材・生のエラー・IPは記録しません。
+- AI呼び出しは`store:false`ですが、これだけでOpenAI側の全データ保持を無効にするわけではありません。[公式のデータ管理方針](https://developers.openai.com/api/docs/guides/your-data)を確認してください。
+- 写真変更や画面終了で古い通信を中止し、遅れて届いた結果・エラー・終了処理を無視します。分析と生成の重複実行も防止します。
+
+## 検証
+
+```sh
+npm test
+npm run lint
+npm run typecheck
+npm run build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+テストはNode.js標準のテスト機能を使用し、OpenAIとRedisのHTTP応答を模擬します。有料APIを呼びません。
+画像デコード、入力上限、AI返答の検証、設定不足、利用制限の拒否、エラー秘匿、古い処理の排除を確認します。
+GitHub Actionsでも同じ検査を実行します。ビルドには既存のGoogleフォント取得用の通信が必要です。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 本番接続後の確認（管理者）
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. 公開先の環境変数とNode.jsを設定。最初はアクセスを限定して検証する。
+2. ステージング用DBで両APIの成功を確認。RedisのEVALが実行されることを確認する。
+3. 一時的に小さな上限を設定し、複数のサーバーから同時に呼び出しても上限を超えず429になることを確認する。
+4. Redis障害・APIキー不正・利用停止スイッチでAI呼び出しが止まることを確認する。
+5. 実際の冷蔵庫写真で分析→3品提案を確認。処理中に写真を変更し、結果が混在しないことを確認する。
+6. 使用量と待ち時間を確認し、適切な上限に戻す。
 
-## Learn More
+実際のOpenAI・Upstashへの接続と、公開先の制限時間・IPヘッダーの保証は環境ごとの確認が必要です。
+## 食材の編集
 
-To learn more about Next.js, take a look at the following resources:
+「料理に使う食材」で、分析された食材名を直接修正できます。「食材を追加」で行を増やし、「削除」で不要な食材を取り除けます。写真なしの手入力や、分析結果が0件の場合も追加できます。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+最大30個・各80文字まで。空欄や空白だけの行がある間は料理提案を開始できません。送信時には食材名の前後の空白を取り除きます。
+食材を変更すると、変更前の食材による料理提案は消去します。分析・料理生成中は編集を一時停止し、写真を選び直した場合は食材一覧もリセットします。編集内容はページの再読み込みで消えます。
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+人数指定、保存などは今後の実装対象です。
