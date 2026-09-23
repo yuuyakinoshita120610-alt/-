@@ -58,6 +58,13 @@ test('production fails closed without key, shared limiter or salt; disabled swit
   assert.throws(() => getConfig({ ...env, AI_ENABLED: 'false' }), { code: 'DISABLED' });
   assert.throws(() => getConfig({ ...env, UPSTASH_REDIS_REST_URL: config.redisUrl, UPSTASH_REDIS_REST_TOKEN: 'x', RATE_LIMIT_SALT: config.salt, AI_DAILY_CALL_LIMIT: 'NaN' }), { code: 'CONFIGURATION' });
 });
+test('Vercel Marketplace Redis credentials work without mixing credential pairs', () => {
+  const env = { NODE_ENV: 'production', AI_ENABLED: 'true', OPENAI_API_KEY: 'x', RATE_LIMIT_SALT: config.salt, UPSTASH_REDIS_REST_URL: '', UPSTASH_REDIS_REST_TOKEN: '', KV_REST_API_URL: config.redisUrl, KV_REST_API_TOKEN: 'marketplace-token' };
+  assert.equal(getConfig(env).redisToken, 'marketplace-token');
+  assert.throws(() => getConfig({ ...env, UPSTASH_REDIS_REST_URL: config.redisUrl }), { code: 'CONFIGURATION' });
+  assert.throws(() => getConfig({ ...env, KV_REST_API_TOKEN: '' }), { code: 'CONFIGURATION' });
+});
+
 test('untrusted forwarded headers cannot obtain a fresh caller quota', () => {
   const a = new Request('http://localhost', { headers: { 'x-forwarded-for': '1.1.1.1' } });
   const b = new Request('http://localhost', { headers: { 'x-forwarded-for': '2.2.2.2' } });

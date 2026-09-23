@@ -15,8 +15,10 @@ export function getConfig(env: NodeJS.ProcessEnv = process.env) {
   }
   const apiKey = env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw configurationError();
-  const redisUrl = env.UPSTASH_REDIS_REST_URL?.trim();
-  const redisToken = env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  // Vercel Marketplace provisions KV_REST_API_*; direct Upstash uses UPSTASH_*.
+  const directRedis = Boolean(env.UPSTASH_REDIS_REST_URL?.trim() || env.UPSTASH_REDIS_REST_TOKEN?.trim());
+  const redisUrl = (directRedis ? env.UPSTASH_REDIS_REST_URL : env.KV_REST_API_URL)?.trim();
+  const redisToken = (directRedis ? env.UPSTASH_REDIS_REST_TOKEN : env.KV_REST_API_TOKEN)?.trim();
   const salt = env.RATE_LIMIT_SALT?.trim();
   if (Boolean(redisUrl) !== Boolean(redisToken)) throw configurationError();
   if (production && (!redisUrl || !salt || salt.length < 32)) throw configurationError();
