@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { analysisSchema, recipesSchema, recipeInputSchema, imageFileError, type Recipe } from "@/lib/contracts";
 import { postApi } from "@/lib/client-api";
 import { RequestGate } from "@/lib/request-gate";
 import IngredientEditor from "./components/ingredient-editor";
+import SeasoningPantry from "./components/seasoning-pantry";
+import type { Seasoning } from "@/lib/pantry";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [image, setImage] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<string[]>([]);
+  const [seasonings, setSeasonings] = useState<Seasoning[]>([]);
   const [analyzed, setAnalyzed] = useState(false);
   const [edited, setEdited] = useState(false);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -20,7 +23,11 @@ export default function Home() {
   const preview = useRef<string | null>(null);
   const analyzing = busy === "analyze";
   const generating = busy === "recipes";
-  const recipeInput = recipeInputSchema.safeParse({ ingredients });
+  const recipeInput = recipeInputSchema.safeParse({ ingredients, seasonings });
+  const saveSeasonings = useCallback((items: Seasoning[]) => {
+    gate.current.invalidate();
+    setBusy(null); setSeasonings(items); setRecipes([]); setOpenRecipe(null); setError("");
+  }, []);
 
   useEffect(() => {
     const requests = gate.current;
@@ -189,6 +196,8 @@ export default function Home() {
 
             </section>
 
+          <SeasoningPantry disabled={busy !== null} onSave={saveSeasonings} />
+
           {recipes.length > 0 && (
             <section className="mt-10">
 
@@ -243,7 +252,7 @@ export default function Home() {
                         ) : (
                           <p className="mt-2 text-sm text-green-800">追加の食材はありません。</p>
                         )}
-                        <p className="mt-2 text-xs text-gray-600">入力した食材と比較しています。調味料も含みます。手元の分量は材料一覧で確認してください。</p>
+                        <p className="mt-2 text-xs text-gray-600">入力した食材・保存した調味料と比較しています。手元の分量は材料一覧で確認してください。</p>
                       </div>
 
                       <button

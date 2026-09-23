@@ -44,7 +44,7 @@ export async function readIngredients(request: Request) {
   catch { throw new AppError(400, "INVALID_JSON", "食材データを読み取れませんでした。"); }
   const result = recipeInputSchema.safeParse(json);
   if (!result.success) throw new AppError(400, "INVALID_INGREDIENTS", "食材を1〜30個、各80文字以内で指定してください。");
-  return result.data.ingredients;
+  return [...new Set([...result.data.ingredients, ...(result.data.seasonings || [])])];
 }
 
 export async function readImage(request: Request) {

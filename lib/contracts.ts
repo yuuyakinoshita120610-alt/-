@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SEASONINGS } from "./pantry";
 
 export const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 export const IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -8,6 +9,7 @@ export const analysisSchema = z.object({
 }).strict();
 export const recipeInputSchema = z.object({
   ingredients: z.array(ingredient).min(1).max(30),
+  seasonings: z.array(z.enum(SEASONINGS)).max(SEASONINGS.length).optional(),
 }).strict();
 export const recipesSchema = z.object({
   recipes: z.array(z.object({
